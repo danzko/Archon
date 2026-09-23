@@ -58,7 +58,8 @@ nodes:
 
   - id: review-anthropic
     command: review-merge-candidate
-    model: '@review-anthropic'
+    provider: claude
+    model: claude-sonnet-5
     context: fresh
     mutates_checkout: false
     depends_on: [freeze]
@@ -85,7 +86,8 @@ nodes:
 
   - id: review-zai
     command: review-merge-candidate
-    model: '@review-zai'
+    provider: pi
+    model: zai/glm-4.7
     context: fresh
     mutates_checkout: false
     depends_on: [freeze]

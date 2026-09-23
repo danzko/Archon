@@ -12,6 +12,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { removeTempTree } from '@archon/paths/test-utils';
 import { execFileAsync } from '@archon/git';
+import { registerBuiltinProviders, registerPiProvider } from '@archon/providers';
 import {
   isBinaryBuild,
   BUNDLED_COMMANDS,
@@ -27,6 +28,9 @@ import { parseWorkflow } from '../loader';
 import { dryRunWorkflow } from '../dry-run';
 import { resolveWorkflow } from '../graph-plan';
 import { makeTestWorkflow } from '../test-utils';
+
+registerBuiltinProviders();
+registerPiProvider();
 
 // Resolve the on-disk defaults directories relative to this test file so the
 // tests work regardless of cwd. From packages/workflows/src/defaults go up
@@ -364,7 +368,7 @@ describe('bundled-defaults', () => {
       expect(review.with).not.toHaveProperty('pr_head');
     });
 
-    it('archon-merge-queue requires both alias-bound fresh reviews before its native merge script', () => {
+    it('archon-merge-queue requires both portable fresh reviews before its native merge script', () => {
       const parsed = parseWorkflow(
         BUNDLED_WORKFLOWS['archon-merge-queue'],
         'archon-merge-queue.yaml'
@@ -372,12 +376,12 @@ describe('bundled-defaults', () => {
       if (parsed.workflow === null) throw new Error(parsed.error.error);
 
       const byId = new Map(parsed.workflow.nodes.map(node => [node.id, node]));
-      for (const [id, model] of [
-        ['review-anthropic', '@review-anthropic'],
-        ['review-zai', '@review-zai'],
+      for (const [id, provider, model] of [
+        ['review-anthropic', 'claude', 'claude-sonnet-5'],
+        ['review-zai', 'pi', 'zai/glm-4.7'],
       ] as const) {
         const node = byId.get(id);
-        expect(node).toMatchObject({ kind: 'agent', model, context: 'fresh' });
+        expect(node).toMatchObject({ kind: 'agent', provider, model, context: 'fresh' });
         if (node?.kind !== 'agent') throw new Error(`${id} is not an agent node`);
         expect(node.source).toMatchObject({ kind: 'command', name: 'review-merge-candidate' });
       }

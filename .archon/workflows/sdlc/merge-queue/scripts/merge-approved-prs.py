@@ -24,10 +24,16 @@ def input_json(name: str) -> object:
         raise ValueError(f"{name} is not JSON")
 
 
-def gh(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+def gh_result(args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
-        result = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def gh(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    result = gh_result(args)
+    if result is None:
         return None
     return result if result.returncode == 0 else None
 
@@ -91,12 +97,20 @@ def vendor_matches(role: str, started: dict, completed: dict) -> bool:
     billed = usage.get("resolved") if isinstance(usage, dict) else None
     if not isinstance(provider, str) or not isinstance(model, str):
         return False
-    values = [model, billed] if isinstance(billed, str) else [model]
     if role == "review-anthropic":
-        # Claude is the native subscription route; Pi must name Anthropic explicitly.
-        return (provider == "claude" and not any(value.startswith("zai/") for value in values)
-                or provider == "pi" and all(value.startswith("anthropic/") for value in values))
-    return provider == "pi" and all(value.startswith(("zai/", "zai-coding-cn/")) for value in values)
+        if provider == "claude":
+            # Claude reports its billed model only when the SDK resolved one. Without
+            # that native identity, a claimed Anthropic review is ambiguous.
+            if not isinstance(usage, dict):
+                return False
+            requested, resolved = usage.get("requested"), usage.get("resolved")
+            return all(isinstance(value, str) and value.startswith("claude-")
+                       for value in (model, requested, resolved))
+        return (provider == "pi" and model.startswith("anthropic/")
+                and (billed is None or isinstance(billed, str) and billed.startswith("anthropic/")))
+    return (provider == "pi" and model.startswith(("zai/", "zai-coding-cn/"))
+            and (billed is None or isinstance(billed, str)
+                 and billed.startswith(("zai/", "zai-coding-cn/"))))
 
 
 def verified_events(anthropic: object, zai: object) -> bool:
@@ -121,7 +135,6 @@ def verified_events(anthropic: object, zai: object) -> bool:
     events = payload.get("events")
     if not isinstance(events, list):
         return False
-    paired: dict[str, tuple[dict, dict]] = {}
     starts: dict[str, list[dict]] = {"review-anthropic": [], "review-zai": []}
     completes: dict[str, list[dict]] = {"review-anthropic": [], "review-zai": []}
     expected = {"review-anthropic": anthropic, "review-zai": zai}
@@ -144,22 +157,25 @@ def verified_events(anthropic: object, zai: object) -> bool:
             return False
         if completes[role][0].get("structured_output") != expected[role]:
             return False
-        paired[role] = (starts[role][0], completes[role][0])
-        if not vendor_matches(role, *paired[role]):
+        if not vendor_matches(role, starts[role][0], completes[role][0]):
             return False
     return True
 
 
-def live_pr(repository: str, pr: dict) -> dict | None:
+def current_pr(repository: str, pr: dict) -> dict | None:
     payload = gh_json(["pr", "view", pr["url"], "--repo", repository,
                        "--json", "number,url,headRefOid,baseRefName,state,isDraft,isCrossRepository,mergeStateStatus"])
     if not isinstance(payload, dict):
         return None
     required = (payload.get("number") == pr["number"] and payload.get("url") == pr["url"]
                 and payload.get("headRefOid") == pr["head_sha"] and payload.get("state") == "OPEN"
-                and payload.get("isDraft") is False and payload.get("isCrossRepository") is False
-                and payload.get("mergeStateStatus") == "CLEAN")
+                and payload.get("isDraft") is False and payload.get("isCrossRepository") is False)
     return payload if required else None
+
+
+def merge_ready_pr(repository: str, pr: dict) -> dict | None:
+    pr = current_pr(repository, pr)
+    return pr if pr is not None and pr.get("mergeStateStatus") == "CLEAN" else None
 
 
 def live_base(repository: str, base: str) -> str | None:
@@ -222,20 +238,21 @@ def main() -> int:
         return refuse("merge refused: the live base moved after assessment.")
     merged: list[str] = []
     for pr in prs:
-        live = live_pr(repository, pr)
+        live = current_pr(repository, pr)
         if live_base(repository, base) != live_base_sha or live is None or live.get("baseRefName") != base:
             return refuse("merge refused: a PR changed after review.", merged)
-        if not publish_statuses(repository, pr) or not checks_pass(repository, pr):
+        if not publish_statuses(repository, pr):
+            return refuse("merge refused: verified review statuses could not be published.", merged)
+        if merge_ready_pr(repository, pr) is None or not checks_pass(repository, pr):
             return refuse("merge refused: required live checks are not all passing.", merged)
-        result = gh(["pr", "merge", pr["url"], "--repo", repository, "--match-head-commit", pr["head_sha"]])
+        gh_result(["pr", "merge", pr["url"], "--repo", repository, "--squash",
+                   "--match-head-commit", pr["head_sha"]])
         read_back = gh_json(["pr", "view", pr["url"], "--repo", repository, "--json", "state,mergeCommit"])
-        if result is None or not isinstance(read_back, dict) or read_back.get("state") != "MERGED":
+        if not isinstance(read_back, dict) or read_back.get("state") != "MERGED":
             return refuse("merge stopped: GitHub did not confirm the requested merge.", merged)
         merged.append(pr["url"])
         if len(merged) < len(prs):
-            live_base_sha = live_base(repository, base)
-            if live_base_sha is None:
-                return refuse("merge stopped: could not read the live base after a merge.", merged)
+            return refuse("merge stopped: the confirmed merge advanced the shared base; revalidate remaining PRs.", merged)
     summary = f"confirmed merge of {len(merged)} PR(s) after fresh Anthropic and Z.AI reviews"
     Path(os.environ["ARTIFACTS_DIR"]).mkdir(parents=True, exist_ok=True)
     (Path(os.environ["ARTIFACTS_DIR"]) / "merge-result.md").write_text("# Merge result\n\n" + summary + "\n")
