@@ -11,13 +11,13 @@ review and actual validation evidence, including project-required runtime checks
 No checks is not evidence of validation. Read the supplied reports in full and
 verify their source/head matches; a prose assertion that tests passed is insufficient.
 
-Independent review means a reviewer other than the implementer, not a different
-GitHub login. In a single-account factory the same identity pushes the branch and
-posts the shared review workflow's canonical report: an issue comment on the PR
-beginning with `<!-- archon-review-report -->`. Accept that report as the
-independent review when its verdict is ready with no open blocking findings and it
-names the PR's current head; a submitted GitHub review is not required. Hold when
-the canonical report is missing, not ready, or describes an older head.
+The final merge gate supplies two fresh, vendor-distinct reviews after this
+assessment. Existing canonical review reports remain useful evidence here, but do
+not treat either gate-owned status context (`factory/review-anthropic` or
+`factory/review-zai`) as independent validation: the final script publishes them
+only after it verifies the reviewer events. All other required checks, including
+`factory/runtime`, must already be present and passing; missing or unknown checks
+hold the batch.
 
 Read dependencies and diffs to select an order. Hold if the requested PRs have an
 unresolved dependency or incompatible changes; do not silently add PRs to the batch.

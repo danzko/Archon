@@ -310,11 +310,11 @@ describe('bundled-defaults', () => {
       const triage = parsed.workflow.nodes.find(node => node.id === 'triage');
       expect(triage?.kind).toBe('include');
       if (triage?.kind !== 'include') throw new Error('triage is not an include');
-      expect(triage.with).toEqual({ target: '$INPUTS.target' });
+      expect(triage.with).toEqual({ target: '$INPUTS.target', publish: '$INPUTS.publish' });
 
       const triageCommand = BUNDLED_COMMANDS['__archon_pack__bundled:sdlc:triage::triage'];
       expect(triageCommand).toContain('Write `$ARTIFACTS_DIR/triage.md`');
-      expect(triageCommand).toContain('**Source and outcome** — what was requested');
+      expect(triageCommand).toContain('**Source and outcome** - what was requested');
 
       const downstreamBindings = [
         { id: 'inv', input: 'target' },
@@ -362,6 +362,32 @@ describe('bundled-defaults', () => {
       // beside a head branch nothing downstream reads (#2968).
       expect(review.with).not.toHaveProperty('pr_number');
       expect(review.with).not.toHaveProperty('pr_head');
+    });
+
+    it('archon-merge-queue requires both alias-bound fresh reviews before its native merge script', () => {
+      const parsed = parseWorkflow(
+        BUNDLED_WORKFLOWS['archon-merge-queue'],
+        'archon-merge-queue.yaml'
+      );
+      if (parsed.workflow === null) throw new Error(parsed.error.error);
+
+      const byId = new Map(parsed.workflow.nodes.map(node => [node.id, node]));
+      for (const [id, model] of [
+        ['review-anthropic', '@review-anthropic'],
+        ['review-zai', '@review-zai'],
+      ] as const) {
+        const node = byId.get(id);
+        expect(node).toMatchObject({ kind: 'agent', model, context: 'fresh' });
+        if (node?.kind !== 'agent') throw new Error(`${id} is not an agent node`);
+        expect(node.source).toMatchObject({ kind: 'command', name: 'review-merge-candidate' });
+      }
+      const merge = byId.get('merge');
+      expect(merge).toMatchObject({ kind: 'exec', runtime: 'uv', script: 'merge-approved-prs' });
+      if (merge?.kind !== 'exec') throw new Error('merge is not an executable node');
+      expect(merge.depends_on).toEqual(['freeze', 'review-anthropic', 'review-zai', 'approval']);
+      expect(
+        BUNDLED_COMMANDS['__archon_pack__bundled:sdlc:merge-queue::merge-approved-prs']
+      ).toBeUndefined();
     });
 
     it('archon-deliver delegates the optional CI read timeout to the engine', () => {
