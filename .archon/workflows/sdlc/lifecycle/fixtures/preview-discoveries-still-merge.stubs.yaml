@@ -119,13 +119,34 @@ discoveries__render:
 merge__assess:
   ready: true
   summary: "stub: batch eligible"
+merge__freeze:
+  ready: true
+  batch:
+    repository: "example/app"
+    base: "main"
+    base_sha: "0123456789abcdef0123456789abcdef01234567"
+    prs:
+      - repository: "example/app"
+        number: 7
+        url: "https://github.com/example/app/pull/7"
+        head_sha: "0123456789abcdef0123456789abcdef01234567"
+  summary: "stub: batch frozen"
+merge__review-anthropic: &merge_review
+  reviews:
+    - repository: "example/app"
+      number: 7
+      head_sha: "0123456789abcdef0123456789abcdef01234567"
+      ready: true
+      action: "none"
+      findings: ""
+merge__review-zai: *merge_review
 merge__merge:
   merged: true
   urls: ["https://github.com/example/app/pull/7"]
   summary: "stub: merged"
 fixture:
   expect: completed
-  reached: [merge__assess, merge__merge]
+  reached: [merge__assess, merge__freeze, merge__review-anthropic, merge__review-zai, merge__merge]
   inputs:
     target: "https://github.com/example/app/issues/1"
     scenario: "/private/scenario.json"

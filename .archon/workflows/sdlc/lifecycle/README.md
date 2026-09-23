@@ -8,6 +8,9 @@ and the optional `deploy`/`health`/`identity` commands forwarded to `archon-depl
 after a confirmed merge. Modes default to approval and preview; select auto
 explicitly for unattended publication/merge.
 
+The shared queue freezes the qualified batch and requires fresh Anthropic and
+Z.AI exact-head reviews before its deterministic merge script can act.
+
 **Backlog intake.** An empty `target` makes the first node select the oldest open
 issue in the origin repository that no earlier run has touched: no `archon-*`
 state label and no open pull request naming it. That is deterministic `gh`

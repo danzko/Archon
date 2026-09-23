@@ -32,7 +32,7 @@ nodes:
       required: [ready, summary]
 
   - id: approval
-    depends_on: [assess]
+    depends_on: [review-anthropic, review-zai]
     when: "$assess.output.ready == true && $INPUTS.mode == 'approve'"
     approval:
       message: "Approve the PRs and pinned heads in $ARTIFACTS_DIR/merge-plan.json? $assess.output.summary"
@@ -42,15 +42,73 @@ nodes:
         - id: hold
           label: Hold batch
 
-  - id: merge
-    command: merge-approved-prs
-    context: fresh
-    depends_on: [assess, approval]
-    trigger_rule: none_failed_min_one_success
+  - id: freeze
+    script: freeze-merge-batch
+    runtime: uv
+    depends_on: [assess]
     with:
       ready: "$assess.output.ready"
+    output_format:
+      type: object
+      properties:
+        ready: { type: boolean }
+        batch: { type: object }
+        summary: { type: string }
+      required: [ready, batch, summary]
+
+  - id: review-anthropic
+    command: review-merge-candidate
+    provider: claude
+    model: claude-sonnet-5
+    context: fresh
+    mutates_checkout: false
+    depends_on: [freeze]
+    when: "$freeze.output.ready == true"
+    with:
+      batch: "$freeze.output.batch"
+      destination: "$ARTIFACTS_DIR/merge-reviews/anthropic/report.md"
+    output_format: &review-output
+      type: object
+      properties:
+        reviews:
+          type: array
+          items:
+            type: object
+            properties:
+              repository: { type: string }
+              number: { type: integer }
+              head_sha: { type: string }
+              ready: { type: boolean }
+              action: { type: string, enum: [none, correct, replan] }
+              findings: { type: string }
+            required: [repository, number, head_sha, ready, action, findings]
+      required: [reviews]
+
+  - id: review-zai
+    command: review-merge-candidate
+    provider: pi
+    model: zai/glm-4.7
+    context: fresh
+    mutates_checkout: false
+    depends_on: [freeze]
+    when: "$freeze.output.ready == true"
+    with:
+      batch: "$freeze.output.batch"
+      destination: "$ARTIFACTS_DIR/merge-reviews/zai/report.md"
+    output_format: *review-output
+
+  - id: merge
+    script: merge-approved-prs
+    runtime: uv
+    depends_on: [freeze, review-anthropic, review-zai, approval]
+    trigger_rule: none_failed_min_one_success
+    with:
+      ready: "$freeze.output.ready"
       mode: "$INPUTS.mode"
       approval: { from: "$approval.output", if_skipped: null }
+      batch: "$freeze.output.batch"
+      anthropic: { from: "$review-anthropic.output", if_skipped: null }
+      zai: { from: "$review-zai.output", if_skipped: null }
     output_format:
       type: object
       properties:
