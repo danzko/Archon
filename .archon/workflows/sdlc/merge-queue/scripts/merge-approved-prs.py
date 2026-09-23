@@ -24,12 +24,12 @@ def input_json(name: str) -> object:
         raise ValueError(f"{name} is not JSON")
 
 
-def gh(args: list[str], required: bool = True) -> subprocess.CompletedProcess[str] | None:
+def gh(args: list[str]) -> subprocess.CompletedProcess[str] | None:
     try:
         result = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return result if result.returncode == 0 or not required else None
+    return result if result.returncode == 0 else None
 
 
 def gh_json(args: list[str]) -> object | None:
@@ -135,7 +135,7 @@ def verified_events(anthropic: object, zai: object) -> bool:
             starts[role].append(event["data"])
         elif event.get("event_type") == "node_completed":
             completes[role].append(event["data"])
-        elif event.get("event_type") in ("node_failed", "node_skipped"):
+        elif event.get("event_type") in ("node_failed", "node_skipped", "node_skipped_prior_success"):
             return False
     for role in starts:
         # One terminal, current-run command execution per role: replayed/old successes,
@@ -189,6 +189,17 @@ def publish_statuses(repository: str, pr: dict) -> bool:
     return True
 
 
+def authorized(mode: str, approval: str) -> bool:
+    if mode == "auto":
+        return True
+    if mode != "approve":
+        return False
+    try:
+        return isinstance((decision := json.loads(approval)), dict) and decision.get("decision") == "approve"
+    except json.JSONDecodeError:
+        return False
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     try:
@@ -202,7 +213,7 @@ def main() -> int:
     repository, base, expected_base, prs = parsed
     approval = os.environ.get("INPUTS_APPROVAL", "")
     mode = os.environ.get("INPUTS_MODE", "")
-    if os.environ.get("INPUTS_READY") != "true" or (mode != "auto" and not (mode == "approve" and '"decision":"approve"' in approval.replace(" ", ""))):
+    if os.environ.get("INPUTS_READY") != "true" or not authorized(mode, approval):
         return refuse("merge not authorized for this batch.")
     if not exact_review(anthropic, prs) or not exact_review(zai, prs) or not verified_events(anthropic, zai):
         return refuse("merge refused: fresh, distinct vendor review evidence is incomplete.")
